@@ -42,7 +42,7 @@ If paths cannot be detected, the app displays a warning in the menu.
 ## Build & Run
 
 ```bash
-cd /Users/justinbauer/Dev/clawdbot-menubar
+cd /path/to/clawdbot-menubar
 
 # Build the .app bundle
 ./build-app.sh
