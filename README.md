@@ -1,6 +1,6 @@
 # ClawdbotMenu - macOS Menu Bar App
 
-A macOS menu bar app for monitoring and controlling the Clawdbot gateway.
+A macOS menu bar app for monitoring and controlling the [Clawdbot](https://clawd.bot) gateway.
 
 > **Note:** This is a basic first version - doesn't even have an app icon yet!
 
@@ -88,6 +88,18 @@ ClawdbotMenu/
 - Status detection via port check (lsof on port 18789)
 - Async process management to prevent UI blocking
 - Supports both direct process spawning and launchd service management
+
+## Links
+
+- [Clawdbot Website](https://clawd.bot)
+- [Clawdbot GitHub](https://github.com/clawdbot/clawdbot)
+- [Clawdbot Documentation](https://docs.clawd.bot)
+
+## Credits
+
+[Clawdbot](https://github.com/clawdbot/clawdbot) was created by [@steipete](https://x.com/steipete).
+
+This menu bar app was created by [@magimetal](https://x.com/magimetal).
 
 ## Contributing
 
