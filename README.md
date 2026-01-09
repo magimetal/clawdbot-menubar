@@ -4,6 +4,11 @@ A macOS menu bar app for monitoring and controlling the Clawdbot gateway.
 
 > **Note:** This is a basic first version - doesn't even have an app icon yet!
 
+<p align="center">
+  <img src="img/un-launched.png" width="280" alt="Gateway Stopped" />
+  <img src="img/launched.png" width="280" alt="Gateway Running" />
+</p>
+
 ## Features
 
 - Menu bar icon with color-coded status (green/yellow/red/gray)
