@@ -2,12 +2,14 @@
 
 A macOS menu bar app for monitoring and controlling the Clawdbot gateway.
 
+> **Note:** This is a basic first version - doesn't even have an app icon yet!
+
 ## Features
 
 - Menu bar icon with color-coded status (green/yellow/red/gray)
 - Gateway status display (Running/Stopped/Unknown)
 - PID display when running
-- Discord connection status
+- Discord connection status (primary use case - other providers not yet supported)
 - Sessions count
 - Last check timestamp
 - Start/Stop/Restart gateway controls
@@ -81,3 +83,11 @@ ClawdbotMenu/
 - Status detection via port check (lsof on port 18789)
 - Async process management to prevent UI blocking
 - Supports both direct process spawning and launchd service management
+
+## Contributing
+
+Contributions are welcome! Feel free to open issues or submit PRs.
+
+## License
+
+MIT License - do whatever you want with this.
