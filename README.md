@@ -61,7 +61,7 @@ open ClawdbotMenu.app
 
 The app auto-detects Node.js and clawdbot paths. No manual configuration required.
 
-**Gateway arguments:** `gateway --port 18789 --allow-unconfigured`
+**Gateway arguments:** `gateway --port 18789 --force`
 
 **Logs:** `~/.clawdbot/logs/gateway.log`
 

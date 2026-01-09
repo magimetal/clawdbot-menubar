@@ -372,7 +372,7 @@ final class AppState: ObservableObject {
                   <string>gateway</string>
                   <string>--port</string>
                   <string>\(Self.gatewayPort)</string>
-                  <string>--allow-unconfigured</string>
+                  <string>--force</string>
             """
         } else {
             programArgs = """
@@ -381,7 +381,7 @@ final class AppState: ObservableObject {
                   <string>gateway</string>
                   <string>--port</string>
                   <string>\(Self.gatewayPort)</string>
-                  <string>--allow-unconfigured</string>
+                  <string>--force</string>
             """
         }
         
@@ -680,13 +680,13 @@ final class AppState: ObservableObject {
         
         if scriptPath.hasSuffix(".js") {
             process.executableURL = URL(fileURLWithPath: nodePath)
-            process.arguments = [scriptPath, "gateway", "--port", "\(Self.gatewayPort)", "--allow-unconfigured"]
+            process.arguments = [scriptPath, "gateway", "--port", "\(Self.gatewayPort)", "--force"]
             let scriptURL = URL(fileURLWithPath: scriptPath)
             workingDir = scriptURL.deletingLastPathComponent().deletingLastPathComponent()
             process.currentDirectoryURL = workingDir
         } else {
             process.executableURL = URL(fileURLWithPath: scriptPath)
-            process.arguments = ["gateway", "--port", "\(Self.gatewayPort)", "--allow-unconfigured"]
+            process.arguments = ["gateway", "--port", "\(Self.gatewayPort)", "--force"]
         }
         
         debugLog("Executable: \(process.executableURL?.path ?? "nil")")
