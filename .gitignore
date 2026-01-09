@@ -5,3 +5,4 @@ ClawdbotMenu.app/
 xcuserdata/
 DerivedData/
 .swiftpm/
+*.zip
