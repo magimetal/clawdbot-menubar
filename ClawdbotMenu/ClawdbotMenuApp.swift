@@ -994,24 +994,41 @@ final class AppState: ObservableObject {
     private func detectPnpmPath() -> String? {
         // Try 'which pnpm' first
         if let path = runCommand("/usr/bin/which", arguments: ["pnpm"]) {
+            debugLog("detectPnpmPath: found via which: \(path)")
             return path
         }
 
         // Common pnpm locations
         let homeDir = NSString(string: "~").expandingTildeInPath
-        let commonPaths = [
+        var commonPaths = [
             "/usr/local/bin/pnpm",
             "/opt/homebrew/bin/pnpm",
             "\(homeDir)/.local/share/pnpm/pnpm",
             "\(homeDir)/.pnpm/pnpm"
         ]
 
+        // Check NVM directory for pnpm
+        let nvmVersionsDir = "\(homeDir)/.nvm/versions/node"
+        if FileManager.default.fileExists(atPath: nvmVersionsDir) {
+            if let versions = try? FileManager.default.contentsOfDirectory(atPath: nvmVersionsDir) {
+                let sortedVersions = versions.sorted { v1, v2 in
+                    v1.compare(v2, options: .numeric) == .orderedDescending
+                }
+                for version in sortedVersions {
+                    let pnpmPath = "\(nvmVersionsDir)/\(version)/bin/pnpm"
+                    commonPaths.insert(pnpmPath, at: 0)
+                }
+            }
+        }
+
         for path in commonPaths {
             if FileManager.default.fileExists(atPath: path) {
+                debugLog("detectPnpmPath: found at \(path)")
                 return path
             }
         }
 
+        debugLog("detectPnpmPath: not found")
         return nil
     }
 
@@ -1115,28 +1132,34 @@ final class AppState: ObservableObject {
             }
 
             // Step 3: Build
-            DispatchQueue.main.async {
-                self.updateStatus = "Building..."
-            }
-            self.debugLog("Update: Running pnpm build")
+            self.debugLog("Update: About to run pnpm build")
 
-            if let pnpmPath = self.detectPnpmPath() {
-                let (buildOutput, buildSuccess) = self.runCommandSync(pnpmPath, arguments: ["run", "build"], workingDir: workingDir)
-                self.debugLog("Update: pnpm build result: \(buildSuccess), output: \(buildOutput ?? "nil")")
-
-                if !buildSuccess {
-                    DispatchQueue.main.async {
-                        self.updateStatus = ""
-                        self.isUpdating = false
-                        self.sendNotification(title: "Update Failed", body: "Build failed. Check logs for details.")
-                    }
-                    return
-                }
-            } else {
+            guard let pnpmPath = self.detectPnpmPath() else {
+                self.debugLog("Update: pnpm not found!")
                 DispatchQueue.main.async {
                     self.updateStatus = ""
                     self.isUpdating = false
                     self.sendNotification(title: "Update Failed", body: "pnpm not found")
+                }
+                return
+            }
+
+            self.debugLog("Update: Found pnpm at \(pnpmPath)")
+
+            DispatchQueue.main.sync {
+                self.updateStatus = "Building..."
+            }
+
+            self.debugLog("Update: Running pnpm build in \(workingDir)")
+            let (buildOutput, buildSuccess) = self.runCommandSync(pnpmPath, arguments: ["run", "build"], workingDir: workingDir)
+            self.debugLog("Update: pnpm build result: \(buildSuccess)")
+            self.debugLog("Update: pnpm build output: \(buildOutput ?? "nil")")
+
+            if !buildSuccess {
+                DispatchQueue.main.async {
+                    self.updateStatus = ""
+                    self.isUpdating = false
+                    self.sendNotification(title: "Update Failed", body: "Build failed. Check logs for details.")
                 }
                 return
             }
