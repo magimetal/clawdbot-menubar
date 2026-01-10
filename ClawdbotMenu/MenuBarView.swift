@@ -1,8 +1,11 @@
 import SwiftUI
+import AppKit
 
 struct MenuBarView: View {
     @EnvironmentObject var appState: AppState
     @State private var launchAtLogin: Bool = LaunchAtLoginManager.isEnabled
+    @State private var clawdbotPathInput: String = ""
+    @State private var showPathEditor: Bool = false
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -13,9 +16,18 @@ struct MenuBarView: View {
                 Text("Clawdbot")
                     .font(.headline)
                 Spacer()
-                if appState.isRefreshing {
-                    ProgressView()
-                        .scaleEffect(0.6)
+                ProgressView()
+                    .scaleEffect(0.5)
+                    .opacity(appState.isRefreshing ? 1 : 0)
+                if let appIconImage = NSImage(named: "AppIcon") {
+                    Image(nsImage: appIconImage)
+                        .resizable()
+                        .frame(width: 48, height: 48)
+                } else if let iconURL = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
+                          let iconImage = NSImage(contentsOf: iconURL) {
+                    Image(nsImage: iconImage)
+                        .resizable()
+                        .frame(width: 48, height: 48)
                 }
             }
             .padding(.bottom, 4)
@@ -128,10 +140,29 @@ struct MenuBarView: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
+
+                // Update & Rebuild
+                if appState.isUpdating {
+                    HStack {
+                        ProgressView()
+                            .scaleEffect(0.5)
+                        Text(appState.updateStatus)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                } else {
+                    Button(action: { appState.updateAndRebuild() }) {
+                        Label("Update & Rebuild", systemImage: "arrow.triangle.2.circlepath")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(appState.getClawdbotDirectory() == nil)
+                }
             }
-            
+
             Divider()
-            
+
             VStack(alignment: .leading, spacing: 8) {
                 Toggle(isOn: $launchAtLogin) {
                     Label("Launch at Login", systemImage: "power")
@@ -157,7 +188,66 @@ struct MenuBarView: View {
                 }
                 .pickerStyle(.menu)
                 .controlSize(.small)
-                
+
+                // Clawdbot Path Configuration
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("Clawdbot Path")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        if !appState.clawdbotPath.isEmpty {
+                            Image(systemName: appState.validateClawdbotPath(appState.clawdbotPath) ? "checkmark.circle.fill" : "xmark.circle.fill")
+                                .foregroundColor(appState.validateClawdbotPath(appState.clawdbotPath) ? .green : .red)
+                                .font(.caption)
+                        }
+                    }
+
+                    if showPathEditor {
+                        HStack(spacing: 4) {
+                            TextField("~/Dev/clawdbot", text: $clawdbotPathInput)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.caption)
+                                .onSubmit {
+                                    appState.setClawdbotPath(clawdbotPathInput)
+                                    showPathEditor = false
+                                }
+
+                            Button(action: browseForPath) {
+                                Image(systemName: "folder")
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+
+                            Button(action: {
+                                appState.setClawdbotPath(clawdbotPathInput)
+                                showPathEditor = false
+                            }) {
+                                Image(systemName: "checkmark")
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                        }
+                    } else {
+                        Button(action: {
+                            clawdbotPathInput = appState.clawdbotPath
+                            showPathEditor = true
+                        }) {
+                            HStack {
+                                Text(appState.clawdbotPath.isEmpty ? "Auto-detect" : appState.clawdbotPath)
+                                    .font(.caption)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                Spacer()
+                                Image(systemName: "pencil")
+                                    .font(.caption)
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                }
+
                 if appState.launchMode == .launchd {
                     HStack(spacing: 8) {
                         if appState.launchdInstalled {
@@ -244,6 +334,21 @@ struct MenuBarView: View {
             return .red
         case .unknown:
             return .gray
+        }
+    }
+
+    private func browseForPath() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.message = "Select your clawdbot installation directory"
+        panel.prompt = "Select"
+
+        if panel.runModal() == .OK, let url = panel.url {
+            clawdbotPathInput = url.path
+            appState.setClawdbotPath(url.path)
+            showPathEditor = false
         }
     }
 }

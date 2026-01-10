@@ -1,8 +1,10 @@
+<p align="center">
+  <img src="img/clawdbot-menubar.png" width="128" alt="ClawdbotMenu Icon" />
+</p>
+
 # ClawdbotMenu - macOS Menu Bar App
 
 A macOS menu bar app for monitoring and controlling the [Clawdbot](https://clawd.bot) gateway.
-
-> **Note:** This is a basic first version - doesn't even have an app icon yet!
 
 <p align="center">
   <img src="img/un-launched.png" width="280" alt="Gateway Stopped" />

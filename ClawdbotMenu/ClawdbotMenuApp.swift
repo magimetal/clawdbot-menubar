@@ -93,9 +93,12 @@ final class AppState: ObservableObject {
     @Published var detectedNodePath: String?
     @Published var detectedScriptPath: String?
     @Published var launchdInstalled: Bool = false
+    @Published var isUpdating: Bool = false
+    @Published var updateStatus: String = ""
     
     @AppStorage("notificationsEnabled") var notificationsEnabled: Bool = true
     @AppStorage("launchMode") var launchModeRaw: String = LaunchMode.direct.rawValue
+    @AppStorage("clawdbotPath") var clawdbotPath: String = ""
     
     var launchMode: LaunchMode {
         get { LaunchMode(rawValue: launchModeRaw) ?? .direct }
@@ -106,6 +109,8 @@ final class AppState: ObservableObject {
     private var gatewayProcess: Process?
     private var processTerminationObserver: NSObjectProtocol?
     private var pollTimer: Timer?
+    private var fastPollTimer: Timer?
+    private var expectedStatus: GatewayStatus?
     
     private init() {
         requestNotificationPermission()
@@ -167,11 +172,20 @@ final class AppState: ObservableObject {
     }
     
     private func detectScriptPath() -> String? {
-        // Try 'which clawdbot' first
-        if let clawdbotPath = runCommand("/usr/bin/which", arguments: ["clawdbot"]) {
-            return clawdbotPath
+        // Check user-configured path first
+        if !clawdbotPath.isEmpty {
+            let expandedPath = NSString(string: clawdbotPath).expandingTildeInPath
+            let scriptPath = "\(expandedPath)/dist/index.js"
+            if FileManager.default.fileExists(atPath: scriptPath) {
+                return scriptPath
+            }
         }
-        
+
+        // Try 'which clawdbot' first
+        if let whichPath = runCommand("/usr/bin/which", arguments: ["clawdbot"]) {
+            return whichPath
+        }
+
         // Common locations for clawdbot
         let homeDir = NSString(string: "~").expandingTildeInPath
         let commonPaths = [
@@ -180,13 +194,13 @@ final class AppState: ObservableObject {
             "/usr/local/lib/node_modules/clawdbot/dist/index.js",
             "\(homeDir)/.npm-global/lib/node_modules/clawdbot/dist/index.js"
         ]
-        
+
         for path in commonPaths {
             if FileManager.default.fileExists(atPath: path) {
                 return path
             }
         }
-        
+
         // Try npm/pnpm global
         if let npmGlobal = runCommand("/usr/bin/which", arguments: ["npm"]) {
             let npmRoot = runCommand(npmGlobal, arguments: ["root", "-g"])
@@ -197,8 +211,20 @@ final class AppState: ObservableObject {
                 }
             }
         }
-        
+
         return nil
+    }
+
+    func validateClawdbotPath(_ path: String) -> Bool {
+        guard !path.isEmpty else { return false }
+        let expandedPath = NSString(string: path).expandingTildeInPath
+        let scriptPath = "\(expandedPath)/dist/index.js"
+        return FileManager.default.fileExists(atPath: scriptPath)
+    }
+
+    func setClawdbotPath(_ path: String) {
+        clawdbotPath = path
+        detectedScriptPath = detectScriptPath()
     }
     
     private func runCommand(_ command: String, arguments: [String]) -> String? {
@@ -474,19 +500,41 @@ final class AppState: ObservableObject {
     
     deinit {
         pollTimer?.invalidate()
+        fastPollTimer?.invalidate()
         if let observer = processTerminationObserver {
             NotificationCenter.default.removeObserver(observer)
         }
     }
     
     // MARK: - Polling
-    
+
     private func startPolling() {
-        pollTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+        pollTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
             self?.refresh()
         }
     }
-    
+
+    private func startFastPolling(expecting status: GatewayStatus) {
+        expectedStatus = status
+        fastPollTimer?.invalidate()
+        fastPollTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            self?.refresh()
+            if self?.gatewayStatus == self?.expectedStatus {
+                self?.stopFastPolling()
+            }
+        }
+        // Auto-stop after 30 seconds max
+        DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak self] in
+            self?.stopFastPolling()
+        }
+    }
+
+    private func stopFastPolling() {
+        fastPollTimer?.invalidate()
+        fastPollTimer = nil
+        expectedStatus = nil
+    }
+
     func refresh() {
         isRefreshing = true
         
@@ -596,15 +644,24 @@ final class AppState: ObservableObject {
     // MARK: - Gateway Details
     
     private func fetchGatewayDetails() {
+        // Read sessions count from file
+        let sessionsPath = NSString(string: "~/.clawdbot/agents/main/sessions/sessions.json").expandingTildeInPath
+        if let data = FileManager.default.contents(atPath: sessionsPath),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            activeSessionsCount = json.count
+        } else {
+            activeSessionsCount = 0
+        }
+
         let task = Task {
             do {
                 let url = URL(string: "http://127.0.0.1:\(Self.gatewayPort)/")!
                 var request = URLRequest(url: url)
                 request.timeoutInterval = 2.0
                 request.httpMethod = "HEAD"
-                
+
                 let (_, response) = try await URLSession.shared.data(for: request)
-                
+
                 await MainActor.run {
                     if let httpResponse = response as? HTTPURLResponse {
                         self.discordConnected = httpResponse.statusCode == 200
@@ -624,7 +681,9 @@ final class AppState: ObservableObject {
     
     func startGateway() {
         guard gatewayStatus != .running else { return }
-        
+
+        startFastPolling(expecting: .running)
+
         if launchMode == .launchd {
             startViaLaunchd()
         } else {
@@ -739,6 +798,9 @@ final class AppState: ObservableObject {
     
     func stopGateway() {
         debugLog("stopGateway called, launchMode: \(launchMode), launchdInstalled: \(launchdInstalled)")
+
+        startFastPolling(expecting: .stopped)
+
         if launchMode == .launchd && launchdInstalled {
             stopViaLaunchd()
         } else {
@@ -827,6 +889,9 @@ final class AppState: ObservableObject {
     
     func restartGateway() {
         debugLog("restartGateway called")
+
+        startFastPolling(expecting: .running)
+
         if launchMode == .launchd && launchdInstalled {
             restartViaLaunchd()
         } else {
@@ -903,6 +968,192 @@ final class AppState: ObservableObject {
     func openWebUI() {
         if let url = URL(string: "http://127.0.0.1:\(Self.gatewayPort)") {
             NSWorkspace.shared.open(url)
+        }
+    }
+
+    // MARK: - Update & Rebuild
+
+    func getClawdbotDirectory() -> String? {
+        // Use configured path first
+        if !clawdbotPath.isEmpty {
+            return NSString(string: clawdbotPath).expandingTildeInPath
+        }
+
+        // Otherwise derive from detected script path
+        guard let scriptPath = detectedScriptPath else { return nil }
+
+        // Script path is typically .../dist/index.js, we want parent of dist
+        let scriptURL = URL(fileURLWithPath: scriptPath)
+        if scriptPath.contains("/dist/") {
+            return scriptURL.deletingLastPathComponent().deletingLastPathComponent().path
+        }
+
+        return scriptURL.deletingLastPathComponent().path
+    }
+
+    private func detectPnpmPath() -> String? {
+        // Try 'which pnpm' first
+        if let path = runCommand("/usr/bin/which", arguments: ["pnpm"]) {
+            return path
+        }
+
+        // Common pnpm locations
+        let homeDir = NSString(string: "~").expandingTildeInPath
+        let commonPaths = [
+            "/usr/local/bin/pnpm",
+            "/opt/homebrew/bin/pnpm",
+            "\(homeDir)/.local/share/pnpm/pnpm",
+            "\(homeDir)/.pnpm/pnpm"
+        ]
+
+        for path in commonPaths {
+            if FileManager.default.fileExists(atPath: path) {
+                return path
+            }
+        }
+
+        return nil
+    }
+
+    private func runCommandSync(_ command: String, arguments: [String], workingDir: String? = nil) -> (output: String?, success: Bool) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: command)
+        process.arguments = arguments
+
+        if let dir = workingDir {
+            process.currentDirectoryURL = URL(fileURLWithPath: dir)
+        }
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+
+        // Set PATH to include common locations
+        var env = ProcessInfo.processInfo.environment
+        let homeDir = NSString(string: "~").expandingTildeInPath
+        let additionalPaths = [
+            "/usr/local/bin",
+            "/opt/homebrew/bin",
+            "\(homeDir)/.local/share/pnpm",
+            NSString(string: "~/.nvm/versions/node").expandingTildeInPath,
+            "/usr/bin"
+        ]
+        let currentPath = env["PATH"] ?? "/usr/bin:/bin"
+        env["PATH"] = additionalPaths.joined(separator: ":") + ":" + currentPath
+        process.environment = env
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            return (output, process.terminationStatus == 0)
+        } catch {
+            return (nil, false)
+        }
+    }
+
+    func updateAndRebuild() {
+        guard !isUpdating else { return }
+        guard let workingDir = getClawdbotDirectory() else {
+            sendNotification(title: "Update Failed", body: "Could not determine clawdbot directory")
+            return
+        }
+
+        isUpdating = true
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+
+            // Step 1: Stop the gateway
+            DispatchQueue.main.async {
+                self.updateStatus = "Stopping gateway..."
+            }
+            self.debugLog("Update: Stopping gateway")
+
+            // Stop synchronously
+            if self.gatewayStatus == .running {
+                if self.launchMode == .launchd && self.launchdInstalled {
+                    let process = Process()
+                    process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+                    process.arguments = ["bootout", "gui/\(getuid())/\(Self.launchdLabel)"]
+                    process.standardOutput = FileHandle.nullDevice
+                    process.standardError = FileHandle.nullDevice
+                    try? process.run()
+                    process.waitUntilExit()
+                } else if let pid = self.gatewayPID {
+                    self.killPID(pid)
+                }
+
+                // Wait for port to be available
+                var attempts = 0
+                while !self.isPortAvailable() && attempts < 20 {
+                    Thread.sleep(forTimeInterval: 0.5)
+                    attempts += 1
+                }
+            }
+
+            // Step 2: Git operations
+            DispatchQueue.main.async {
+                self.updateStatus = "Pulling latest changes..."
+            }
+            self.debugLog("Update: Git operations in \(workingDir)")
+
+            let (branchOutput, _) = self.runCommandSync("/usr/bin/git", arguments: ["branch", "--show-current"], workingDir: workingDir)
+            let branch = branchOutput?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+            self.debugLog("Update: Current branch is '\(branch)'")
+
+            if branch == "main" {
+                let (pullOutput, pullSuccess) = self.runCommandSync("/usr/bin/git", arguments: ["pull"], workingDir: workingDir)
+                self.debugLog("Update: git pull result: \(pullSuccess), output: \(pullOutput ?? "nil")")
+            } else {
+                let (fetchOutput, fetchSuccess) = self.runCommandSync("/usr/bin/git", arguments: ["fetch", "origin", "main"], workingDir: workingDir)
+                self.debugLog("Update: git fetch result: \(fetchSuccess), output: \(fetchOutput ?? "nil")")
+            }
+
+            // Step 3: Build
+            DispatchQueue.main.async {
+                self.updateStatus = "Building..."
+            }
+            self.debugLog("Update: Running pnpm build")
+
+            if let pnpmPath = self.detectPnpmPath() {
+                let (buildOutput, buildSuccess) = self.runCommandSync(pnpmPath, arguments: ["run", "build"], workingDir: workingDir)
+                self.debugLog("Update: pnpm build result: \(buildSuccess), output: \(buildOutput ?? "nil")")
+
+                if !buildSuccess {
+                    DispatchQueue.main.async {
+                        self.updateStatus = ""
+                        self.isUpdating = false
+                        self.sendNotification(title: "Update Failed", body: "Build failed. Check logs for details.")
+                    }
+                    return
+                }
+            } else {
+                DispatchQueue.main.async {
+                    self.updateStatus = ""
+                    self.isUpdating = false
+                    self.sendNotification(title: "Update Failed", body: "pnpm not found")
+                }
+                return
+            }
+
+            // Step 4: Start the gateway
+            DispatchQueue.main.async {
+                self.updateStatus = "Starting gateway..."
+                self.debugLog("Update: Starting gateway")
+                self.startGateway()
+
+                // Delay before clearing status
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                    self.updateStatus = ""
+                    self.isUpdating = false
+                    self.sendNotification(title: "Update Complete", body: "Clawdbot has been updated and restarted")
+                }
+            }
         }
     }
 }
